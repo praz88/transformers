@@ -295,6 +295,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
+    logger.info("Loading datasets")
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
     # (the dataset will be downloaded automatically from the datasets Hub).
@@ -374,9 +375,7 @@ def main():
                 **dataset_args,
             )
 
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.
-
+    logger.info("Loading pretrained model and tokenizer")
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -468,6 +467,7 @@ def main():
             )
         return output
 
+    logger.info("Tokenizing dataset")
     with training_args.main_process_first(desc="dataset map tokenization"):
         if not data_args.streaming:
             tokenized_datasets = raw_datasets.map(
@@ -525,6 +525,7 @@ def main():
         result["labels"] = result["input_ids"].copy()
         return result
 
+    logger.info("Grouping texts into chunks")
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
     # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
     # to preprocess.
@@ -548,6 +549,7 @@ def main():
             )
 
     if training_args.do_train:
+        logger.info("Preparing training dataset")
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -556,6 +558,7 @@ def main():
             train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
+        logger.info("Preparing evaluation dataset")
         if "validation" not in tokenized_datasets:
             raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = lm_datasets["validation"]
@@ -580,6 +583,7 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
+    logger.info("Initializing Trainer")
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -597,12 +601,16 @@ def main():
 
     # Training
     if training_args.do_train:
+        logger.info("Starting training")
         checkpoint = None
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        logger.info("Training completed")
+
+        logger.info("Saving model")
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
@@ -612,14 +620,14 @@ def main():
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
+        logger.info("Logging training metrics")
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
     # Evaluation
     if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-
+        logger.info("Starting evaluation")
         metrics = trainer.evaluate()
 
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
@@ -630,6 +638,7 @@ def main():
             perplexity = float("inf")
         metrics["perplexity"] = perplexity
 
+        logger.info("Logging evaluation metrics")
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
@@ -643,8 +652,10 @@ def main():
             kwargs["dataset"] = data_args.dataset_name
 
     if training_args.push_to_hub:
+        logger.info("Pushing model to hub")
         trainer.push_to_hub(**kwargs)
     else:
+        logger.info("Creating model card")
         trainer.create_model_card(**kwargs)
 
 
